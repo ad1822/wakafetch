@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/sahaj-b/wakafetch/types"
 )
 
+// Todo : This is not working for local
+// Replace this with our SQLITE version
 func fetchSummary(apiKey, apiURL string, days int) (*types.SummaryResponse, error) {
 	apiURL = strings.TrimSuffix(apiURL, "/")
 	today := time.Now()
@@ -21,10 +25,71 @@ func fetchSummary(apiKey, apiURL string, days int) (*types.SummaryResponse, erro
 		requestURL = fmt.Sprintf("%s/users/current/summaries?start=%s&end=%s", apiURL, startDate, todayDate)
 	}
 	response, err := fetchApi[types.SummaryResponse](apiKey, requestURL)
+	fmt.Println("Respose : ", response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch stats: %w", err)
 	}
 	return response, nil
+}
+
+// fetchSQLiteSummary queries heartbeats and returns counts per day
+func fetchSQLiteSummary(userID string, from, to time.Time) (*types.SummaryResponse, error) {
+	db, err := sql.Open("sqlite3", "/home/ad/.local/share/wakapi/wakapi_db.db")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Count heartbeats per day
+	query := `
+		SELECT strftime('%Y-%m-%d', time) as day, COUNT(*) 
+		FROM heartbeats 
+		WHERE user_id = ? 
+		  AND time >= ? 
+		  AND time < ? 
+		GROUP BY day
+		ORDER BY day ASC;
+	`
+	rows, err := db.Query(query, userID, from.Format(time.RFC3339), to.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Build SummaryResponse
+	summary := &types.SummaryResponse{}
+	var totalSeconds float64
+	for rows.Next() {
+		var day string
+		var count int
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+
+		// Each heartbeat is ~1 second (adjust if your schema is different)
+		totalSeconds += float64(count)
+
+		// Build a DayData record
+		var dayData types.DayData
+		dayData.Range.Date = day
+		dayData.GrandTotal.TotalSeconds = float64(count)
+		dayData.GrandTotal.Text = fmt.Sprintf("%d secs", count)
+		dayData.GrandTotal.Digital = fmt.Sprintf("0:%02d", count) // crude formatting
+		dayData.GrandTotal.Hours = 0
+		dayData.GrandTotal.Minutes = count
+
+		summary.Data = append(summary.Data, dayData)
+	}
+
+	// Fill cumulative total
+	summary.CumulativeTotal.Seconds = totalSeconds
+	summary.CumulativeTotal.Text = fmt.Sprintf("%.0f secs", totalSeconds)
+	summary.CumulativeTotal.Digital = fmt.Sprintf("0:%02.0f", totalSeconds)
+
+	summary.Start = from.Format("2006-01-02")
+	summary.End = to.Format("2006-01-02")
+
+	return summary, rows.Err()
 }
 
 func fetchStats(apiKey, apiURL, rangeStr string) (*types.StatsResponse, error) {

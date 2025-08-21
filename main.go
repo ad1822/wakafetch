@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/sahaj-b/wakafetch/ui"
 )
@@ -22,10 +23,14 @@ import (
 
 func main() {
 	config := parseFlags()
-	apiURL, apiKey := loadAPIConfig(config)
+
+	var apiURL, apiKey string
+	if !shouldUseSummaryAPI(config) {
+		apiURL, apiKey = loadAPIConfig(config)
+	}
 
 	if shouldUseSummaryAPI(config) {
-		handleSummaryFlow(config, apiKey, apiURL)
+		handleSummaryFlow(config) // no apiKey/apiURL here
 	} else {
 		handleStatsFlow(config, apiKey, apiURL)
 	}
@@ -58,7 +63,7 @@ func handleStatsFlow(config Config, apiKey, apiURL string) {
 	ui.DisplayStats(data, *config.fullFlag, rangeStr)
 }
 
-func handleSummaryFlow(config Config, apiKey, apiURL string) {
+func handleSummaryFlow(config Config) {
 	rangeStr := getRangeStr(*config.rangeFlag)
 	days := *config.daysFlag
 	validRange := true
@@ -77,43 +82,45 @@ func handleSummaryFlow(config Config, apiKey, apiURL string) {
 		return
 	}
 
-	data, err := fetchSummary(apiKey, apiURL, days)
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -days)
+
+	data, err := fetchSQLiteSummary("ad1822", from, to)
 	if err != nil {
 		ui.Errorln(err.Error())
+		return
 	}
 
-	var heading string
-	if *config.daysFlag != 0 {
-		if days == 1 {
-			heading = "Today"
-		} else {
-			heading = fmt.Sprintf("Last %d days", days)
-		}
-	} else {
-		headingMap := map[string]string{
-			"today":         "Today",
-			"last_7_days":   "Last 7 days",
-			"last_30_days":  "Last 30 days",
-			"last_6_months": "Last 6 months",
-			"last_year":     "Last year",
-			"all_time":      "All time",
-		}
-		heading = headingMap[rangeStr]
-	}
+	heading := buildHeading(config, days, rangeStr)
 
 	if *config.dailyFlag {
 		ui.DisplayBreakdown(data.Data, heading)
 		return
 	}
-
 	if *config.heatmapFlag {
 		ui.DisplayHeatmap(data.Data, heading)
 		return
 	}
-
 	ui.DisplaySummary(data, *config.fullFlag, heading)
 }
 
+func buildHeading(config Config, days int, rangeStr string) string {
+	if *config.daysFlag != 0 {
+		if days == 1 {
+			return "Today"
+		}
+		return fmt.Sprintf("Last %d days", days)
+	}
+	headingMap := map[string]string{
+		"today":         "Today",
+		"last_7_days":   "Last 7 days",
+		"last_30_days":  "Last 30 days",
+		"last_6_months": "Last 6 months",
+		"last_year":     "Last year",
+		"all_time":      "All time",
+	}
+	return headingMap[rangeStr]
+}
 func getRangeStr(rangeFlag string) string {
 	rangeStrMap := map[string]string{
 		"today": "today",

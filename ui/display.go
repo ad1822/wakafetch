@@ -198,7 +198,7 @@ func DisplayHeatmap(data []types.DayData, heading string) {
 		return
 	}
 
-	heatmapStrs, heatmapWidth := heatmap(data)
+	heatmapStrs, heatmapWidth := heatmap_custom(data)
 	if len(heatmapStrs) == 0 {
 		Warnln("No heatmap data available")
 		return
